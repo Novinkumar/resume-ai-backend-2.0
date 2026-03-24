@@ -10,6 +10,16 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from functools import wraps
 
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.pdfgen import canvas
+from datetime import datetime
+from io import BytesIO
+
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -1207,31 +1217,363 @@ def clear_history():
 @app.route("/generate-report", methods=["POST"])
 @require_auth
 def generate_report():
+    """Generate comprehensive PDF report with all analysis details"""
     try:
-        score = request.form.get("score", "N/A")
-        fit_score = request.form.get("fitScore", "N/A")
-        skills = safe_parse(request.form.get("skills"))
-        matching = safe_parse(request.form.get("matchingSkills"))
-        missing = safe_parse(request.form.get("missingSkills"))
+        # Get data from request
+        data = request.form
+        score = int(data.get("score", 0))
+        fit_score = int(data.get("fitScore", 0))
 
+        # Parse JSON fields
+        skill_strength = safe_parse(data.get("skillStrength", "{}"))
+        matching_skills = safe_parse(data.get("matchingSkills", "[]"))
+        missing_skills = safe_parse(data.get("missingSkills", "[]"))
+        ai_probability = int(data.get("aiProbability", 0))
+        ai_risk = data.get("aiRisk", "Unknown")
+        ai_reasons = safe_parse(data.get("aiReasons", "[]"))
+        overall_feedback = data.get("overallFeedback", "")
+
+        # Learning resources
+        quick_tips = safe_parse(data.get("quickLearningTips", "[]"))
+        learning_resources = safe_parse(data.get("learningResources", "[]"))
+
+        # Additional info
+        job_description = data.get("jobDescription", "")
+
+        print(f"📄 Generating PDF report...")
+        print(f"   Score: {score}, Fit: {fit_score}")
+        print(f"   Skills: {len(skill_strength)} items")
+        print(f"   Matching: {len(matching_skills)}, Missing: {len(missing_skills)}")
+        print(f"   Learning Tips: {len(quick_tips)}, Resources: {len(learning_resources)}")
+
+        # Create PDF
         buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=letter)
-        styles = getSampleStyleSheet()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            rightMargin=50,
+            leftMargin=50,
+            topMargin=50,
+            bottomMargin=50
+        )
+
+        # Container for PDF elements
         elements = []
 
-        elements.append(Paragraph("Resume Analysis Report", styles['Title']))
-        elements.append(Spacer(1, 12))
-        elements.append(Paragraph(f"ATS Score: {score}%", styles['Normal']))
-        elements.append(Paragraph(f"Fit Score: {fit_score}%", styles['Normal']))
+        # Styles
+        styles = getSampleStyleSheet()
 
+        # Custom styles
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            textColor=colors.HexColor('#667eea'),
+            spaceAfter=30,
+            alignment=TA_CENTER,
+            fontName='Helvetica-Bold'
+        )
+
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading2'],
+            fontSize=16,
+            textColor=colors.HexColor('#667eea'),
+            spaceAfter=12,
+            spaceBefore=12,
+            fontName='Helvetica-Bold'
+        )
+
+        subheading_style = ParagraphStyle(
+            'CustomSubHeading',
+            parent=styles['Heading3'],
+            fontSize=14,
+            textColor=colors.HexColor('#764ba2'),
+            spaceAfter=10,
+            fontName='Helvetica-Bold'
+        )
+
+        normal_style = ParagraphStyle(
+            'CustomNormal',
+            parent=styles['Normal'],
+            fontSize=11,
+            spaceAfter=8,
+            leading=14
+        )
+
+        # ==========================================
+        # TITLE PAGE
+        # ==========================================
+        elements.append(Spacer(1, 1*inch))
+        elements.append(Paragraph("📊 Resume Analysis Report", title_style))
+        elements.append(Spacer(1, 0.5*inch))
+
+        # Report info
+        report_date = datetime.now().strftime("%B %d, %Y at %I:%M %p")
+        elements.append(Paragraph(
+            f"<b>Generated:</b> {report_date}",
+            ParagraphStyle('Center', parent=normal_style, alignment=TA_CENTER)
+        ))
+        elements.append(Spacer(1, 0.3*inch))
+
+        # Score Summary Box
+        score_data = [
+            ['Metric', 'Score', 'Status'],
+            ['ATS Compatibility', f'{score}%', _get_score_status(score)],
+            ['Job Fit Score', f'{fit_score}%' if fit_score > 0 else 'N/A', _get_score_status(fit_score) if fit_score > 0 else '-'],
+            ['AI Content Risk', f'{ai_probability}%', ai_risk],
+        ]
+
+        score_table = Table(score_data, colWidths=[2.5*inch, 1.5*inch, 1.5*inch])
+        score_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#667eea')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 10),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
+        ]))
+
+        elements.append(score_table)
+        elements.append(PageBreak())
+
+        # ==========================================
+        # SKILLS ANALYSIS
+        # ==========================================
+        elements.append(Paragraph("🎯 Skills Analysis", heading_style))
+        elements.append(Spacer(1, 12))
+
+        # Skill Strength
+        if skill_strength and isinstance(skill_strength, dict):
+            elements.append(Paragraph("Skill Strength Ratings", subheading_style))
+
+            skill_data = [['Skill', 'Rating', 'Level']]
+            for skill, rating in skill_strength.items():
+                rating_val = float(rating) if rating else 0
+                rating_out_of_5 = rating_val if rating_val <= 5 else rating_val / 20  # Normalize
+                level = _get_skill_level(rating_out_of_5)
+                skill_data.append([skill, f"{rating_out_of_5:.1f}/5", level])
+
+            skill_table = Table(skill_data, colWidths=[2.5*inch, 1.5*inch, 1.5*inch])
+            skill_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#00D9FF')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 11),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
+            ]))
+
+            elements.append(skill_table)
+            elements.append(Spacer(1, 20))
+
+        # Matching Skills
+        if matching_skills:
+            elements.append(Paragraph("✅ Matching Skills", subheading_style))
+            matching_text = ", ".join(matching_skills)
+            elements.append(Paragraph(
+                f"<font color='green'>{matching_text}</font>",
+                normal_style
+            ))
+            elements.append(Spacer(1, 15))
+
+        # Missing Skills
+        if missing_skills:
+            elements.append(Paragraph("❌ Missing Skills", subheading_style))
+            missing_text = ", ".join(missing_skills)
+            elements.append(Paragraph(
+                f"<font color='red'>{missing_text}</font>",
+                normal_style
+            ))
+            elements.append(Spacer(1, 15))
+
+        elements.append(PageBreak())
+
+        # ==========================================
+        # AI CONTENT DETECTION
+        # ==========================================
+        if ai_probability > 0 or ai_risk != "Unknown":
+            elements.append(Paragraph("🤖 AI Content Detection", heading_style))
+            elements.append(Spacer(1, 12))
+
+            ai_data = [
+                ['AI Probability', f'{ai_probability}%'],
+                ['Risk Level', ai_risk],
+            ]
+
+            ai_table = Table(ai_data, colWidths=[2.5*inch, 3*inch])
+            ai_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0f0f0')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('PADDING', (0, 0), (-1, -1), 8),
+            ]))
+
+            elements.append(ai_table)
+            elements.append(Spacer(1, 15))
+
+            if ai_reasons:
+                elements.append(Paragraph("Reasons for Detection:", subheading_style))
+                for reason in ai_reasons:
+                    elements.append(Paragraph(f"• {reason}", normal_style))
+                elements.append(Spacer(1, 15))
+
+        # ==========================================
+        # OVERALL FEEDBACK
+        # ==========================================
+        if overall_feedback:
+            elements.append(Paragraph("💬 Overall Feedback", heading_style))
+            elements.append(Paragraph(overall_feedback, normal_style))
+            elements.append(Spacer(1, 20))
+
+        elements.append(PageBreak())
+
+        # ==========================================
+        # LEARNING RESOURCES
+        # ==========================================
+        if quick_tips or learning_resources:
+            elements.append(Paragraph("🎓 Learning Resources", heading_style))
+            elements.append(Spacer(1, 12))
+
+            # Quick Tips
+            if quick_tips:
+                elements.append(Paragraph("🚀 Quick Start Guide", subheading_style))
+
+                for tip in quick_tips[:5]:  # Limit to 5
+                    skill = tip.get('skill', 'Unknown')
+                    platform = tip.get('quickStart', 'N/A')
+                    time = tip.get('estimatedTime', 'N/A')
+
+                    elements.append(Paragraph(
+                        f"<b>{skill}</b>",
+                        ParagraphStyle('SkillName', parent=normal_style, textColor=colors.HexColor('#667eea'))
+                    ))
+                    elements.append(Paragraph(f"• Platform: {platform}", normal_style))
+                    elements.append(Paragraph(f"• Time: {time}", normal_style))
+                    elements.append(Spacer(1, 10))
+
+                elements.append(Spacer(1, 15))
+
+            # Detailed Resources
+            if learning_resources:
+                elements.append(Paragraph("📚 Detailed Learning Resources", subheading_style))
+
+                for resource in learning_resources[:3]:  # Limit to 3
+                    skill = resource.get('skill', 'Unknown')
+                    priority = resource.get('priority', 'Medium')
+                    time = resource.get('estimatedTime', 'N/A')
+
+                    elements.append(Paragraph(
+                        f"<b>{skill}</b> ({priority} Priority)",
+                        ParagraphStyle('ResourceSkill', parent=normal_style, textColor=colors.HexColor('#764ba2'), fontName='Helvetica-Bold')
+                    ))
+                    elements.append(Paragraph(f"Estimated Time: {time}", normal_style))
+
+                    # Free Options
+                    free_options = resource.get('freeOptions', [])
+                    if free_options:
+                        elements.append(Paragraph("Free Resources:", normal_style))
+                        for option in free_options[:3]:
+                            name = option.get('name', 'Unknown')
+                            platform = option.get('platform', 'Unknown')
+                            elements.append(Paragraph(f"  • {name} ({platform})", normal_style))
+
+                    # Practice Projects
+                    projects = resource.get('practiceProjects', [])
+                    if projects:
+                        elements.append(Paragraph("Practice Projects:", normal_style))
+                        for project in projects[:3]:
+                            elements.append(Paragraph(f"  • {project}", normal_style))
+
+                    # Top Tips
+                    tips = resource.get('topTips', [])
+                    if tips:
+                        elements.append(Paragraph("Tips:", normal_style))
+                        for tip in tips[:3]:
+                            elements.append(Paragraph(f"  • {tip}", normal_style))
+
+                    elements.append(Spacer(1, 15))
+
+        # ==========================================
+        # FOOTER
+        # ==========================================
+        elements.append(PageBreak())
+        elements.append(Spacer(1, 2*inch))
+        elements.append(Paragraph(
+            "Generated by Resume AI Analyzer",
+            ParagraphStyle('Footer', parent=normal_style, alignment=TA_CENTER, textColor=colors.grey)
+        ))
+        elements.append(Paragraph(
+            "Your AI-Powered Career Coach",
+            ParagraphStyle('Footer2', parent=normal_style, alignment=TA_CENTER, textColor=colors.grey, fontSize=9)
+        ))
+
+        # Build PDF
         doc.build(elements)
+
+        # Get PDF data
         buffer.seek(0)
 
-        return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name="report.pdf")
+        print("✅ PDF generated successfully")
+
+        return send_file(
+            buffer,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f'Resume_Analysis_Report_{datetime.now().strftime("%Y%m%d_%H%M%S")}.pdf'
+        )
+
     except Exception as e:
-        print(f"❌ Generate report error: {e}")
-        traceback.print_exc()
-        return jsonify({"error": "Failed"}), 500
+        print(f"❌ PDF generation error: {e}")
+        print(traceback.format_exc())
+        return jsonify({"error": f"Failed to generate PDF: {str(e)}"}), 500
+
+
+# Helper functions for PDF
+def _get_score_status(score):
+    """Get status text based on score"""
+    if score >= 80:
+        return "Excellent ✅"
+    elif score >= 60:
+        return "Good 👍"
+    elif score >= 40:
+        return "Fair ⚠️"
+    else:
+        return "Needs Work ❌"
+
+
+def _get_skill_level(rating):
+    """Get skill level based on rating (0-5)"""
+    if rating >= 4.5:
+        return "Expert ⭐⭐⭐"
+    elif rating >= 3.5:
+        return "Advanced ⭐⭐"
+    elif rating >= 2.5:
+        return "Intermediate ⭐"
+    elif rating >= 1.5:
+        return "Beginner 📚"
+    else:
+        return "Learning 🌱"
+
+
+def safe_parse(val):
+    """Safely parse JSON string or return original value"""
+    if not val:
+        return [] if isinstance(val, str) and val != "{}" else {}
+    if isinstance(val, (list, dict)):
+        return val
+    try:
+        return json.loads(val)
+    except:
+        return [] if "[" in str(val) else {}
 
 # ===============================
 # RUN SERVER
